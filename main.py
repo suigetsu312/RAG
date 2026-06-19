@@ -46,10 +46,14 @@ def main() -> None:
 
     logger.info(
         "Application started | llm_backend=%s | model=%s | "
-        "base_url=%s",
+        "base_url=%s | embedding_backend=%s | embedding_model=%s | "
+        "embedding_device=%s",
         config.llm.backend,
         config.llm.model,
         config.llm.base_url,
+        config.embedding.backend,
+        config.embedding.model,
+        config.embedding.device,
     )
 
     try:

@@ -17,8 +17,17 @@ class LLMConfig:
 
 
 @dataclass(frozen=True)
+class EmbeddingConfig:
+    backend: str
+    model: str
+    device: str
+    batch_size: int
+
+
+@dataclass(frozen=True)
 class Config:
     llm: LLMConfig
+    embedding: EmbeddingConfig
 
 
 @dataclass(frozen=True)
@@ -97,6 +106,30 @@ def load_env() -> Config:
 
     load_dotenv()
 
+    embedding_batch_size = int(
+        os.getenv("EMBEDDING_BATCH_SIZE", "32")
+    )
+
+    if embedding_batch_size <= 0:
+        raise ValueError(
+            "EMBEDDING_BATCH_SIZE must be greater than 0"
+        )
+
     return Config(
         llm=load_llm_config(),
+        embedding=EmbeddingConfig(
+            backend=os.getenv(
+                "EMBEDDING_BACKEND",
+                "local",
+            ).strip(),
+            model=os.getenv(
+                "EMBEDDING_MODEL",
+                "BAAI/bge-m3",
+            ).strip(),
+            device=os.getenv(
+                "EMBEDDING_DEVICE",
+                "cuda",
+            ).strip(),
+            batch_size=embedding_batch_size,
+        ),
     )
