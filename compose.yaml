@@ -1,0 +1,32 @@
+services:
+  vllm:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.vllm
+
+    container_name: rag-vllm
+    gpus: all
+    ipc: host
+
+    volumes:
+      - "${MODEL_PATH:?MODEL_PATH is required}:/models/llm:ro"
+
+    ports:
+      - "127.0.0.1:${VLLM_PORT:-8000}:8000"
+
+    command:
+      - /models/llm
+      - --served-model-name
+      - "${VLLM_MODEL_NAME:-qwen3-4b-awq}"
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --dtype
+      - auto
+      - --max-model-len
+      - "${VLLM_MAX_MODEL_LEN:-4096}"
+      - --gpu-memory-utilization
+      - "${VLLM_GPU_MEMORY_UTILIZATION:-0.85}"
+
+    restart: unless-stopped
