@@ -5,6 +5,7 @@ description = "RAG prototype"
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
 dependencies = [
+    "bm25s>=0.3.9",
     "faiss-cpu>=1.14.2",
     "fastapi>=0.136.1",
     "httpx>=0.28.1",

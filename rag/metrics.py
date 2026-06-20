@@ -7,6 +7,7 @@ from dataclasses import dataclass
 class RetrievalTimings:
     query_embedding_ms: float
     retrieval_ms: float
+    rerank_ms: float
     total_ms: float
 
 

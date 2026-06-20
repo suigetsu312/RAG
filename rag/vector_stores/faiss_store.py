@@ -35,6 +35,10 @@ class FAISSVectorStore(VectorStore):
     def count(self) -> int:
         return int(self._index.ntotal)
 
+    @property
+    def chunks(self) -> tuple[Chunk, ...]:
+        return tuple(self._chunks)
+
     def add_many(
         self,
         chunks: list[Chunk],

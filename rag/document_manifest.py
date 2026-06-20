@@ -35,6 +35,10 @@ class DocumentManifest:
         }
         self._lock = RLock()
 
+    @property
+    def records(self) -> tuple[DocumentRecord, ...]:
+        return tuple(self._records.values())
+
     @classmethod
     def load(
         cls,

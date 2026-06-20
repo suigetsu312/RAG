@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from config import RetrievalConfig
 from rag.document import (
     Chunk,
     RAGResult,
@@ -12,6 +13,14 @@ from rag.embeddings import EmbeddingResult
 from rag.generators.result import GenerationResult
 from rag.prompts import PromptBuilder
 from rag.rag_service import RAGService
+from rag.relevance import ThresholdRelevancePolicy
+from rag.rerankers import NoOpReranker
+from rag.retrieval_pipeline import RetrievalPipeline
+from rag.retrieval_runtime import (
+    RetrievalComponentManager,
+    RetrievalComponents,
+)
+from rag.retrievers import DenseRetriever
 
 
 class FakeEmbeddingService:
@@ -106,6 +115,54 @@ class FakeAnswerGenerator:
         )
 
 
+def make_service(
+    *,
+    embedding_service: FakeEmbeddingService,
+    vector_store: FakeVectorStore,
+    prompt_builder: PromptBuilder,
+    answer_generator: FakeAnswerGenerator,
+    min_relevance_score: float = 0.6,
+) -> RAGService:
+    config = RetrievalConfig(
+        retriever="dense",
+        reranker="none",
+        relevance_policy="threshold",
+        dense_candidate_k=20,
+        sparse_candidate_k=20,
+        rerank_candidate_k=1,
+        rrf_k=60,
+        min_relevance_score=min_relevance_score,
+        reranker_model="unused",
+        reranker_device="cpu",
+        reranker_batch_size=8,
+        reranker_max_length=512,
+    )
+    pipeline = RetrievalPipeline(
+        retriever=DenseRetriever(
+            embedding_service=embedding_service,
+            vector_store=vector_store,
+        ),
+        reranker=NoOpReranker(),
+        candidate_k=1,
+    )
+    components = RetrievalComponents(
+        config=config,
+        pipeline=pipeline,
+        relevance_policy=ThresholdRelevancePolicy(
+            min_score=min_relevance_score,
+        ),
+        score_kind="cosine_similarity",
+    )
+
+    return RAGService(
+        retrieval_components=RetrievalComponentManager(
+            components
+        ),
+        prompt_builder=prompt_builder,
+        answer_generator=answer_generator,
+    )
+
+
 def make_retrieved_chunk() -> RetrievedChunk:
     text = "Transformer 使用 self-attention 處理序列。"
 
@@ -147,7 +204,7 @@ def test_ask_runs_complete_rag_pipeline() -> None:
         answer="Transformer 使用 self-attention。[Source 1]"
     )
 
-    service = RAGService(
+    service = make_service(
         embedding_service=embedding_service,
         vector_store=vector_store,
         prompt_builder=PromptBuilder(),
@@ -207,7 +264,7 @@ def test_retrieve_returns_chunks_without_generating_answer() -> None:
     answer_generator = FakeAnswerGenerator(
         answer="should not be used",
     )
-    service = RAGService(
+    service = make_service(
         embedding_service=FakeEmbeddingService(
             embedding=query_embedding,
         ),
@@ -230,7 +287,7 @@ def test_retrieve_returns_chunks_without_generating_answer() -> None:
 
 
 def test_retrieve_rejects_empty_query() -> None:
-    service = RAGService(
+    service = make_service(
         embedding_service=FakeEmbeddingService(
             embedding=np.ones(3, dtype=np.float32),
         ),
@@ -262,7 +319,7 @@ def test_ask_returns_no_context_without_calling_generator() -> None:
         answer="should not be used",
     )
 
-    service = RAGService(
+    service = make_service(
         embedding_service=embedding_service,
         vector_store=vector_store,
         prompt_builder=PromptBuilder(),
@@ -287,7 +344,7 @@ def test_ask_skips_generation_for_low_relevance_result() -> None:
     answer_generator = FakeAnswerGenerator(
         answer="should not be used",
     )
-    service = RAGService(
+    service = make_service(
         embedding_service=FakeEmbeddingService(
             embedding=np.array(
                 [1.0, 0.0, 0.0],
@@ -323,7 +380,7 @@ def test_ask_skips_generation_for_low_relevance_result() -> None:
 def test_ask_rejects_empty_question(
     question: str,
 ) -> None:
-    service = RAGService(
+    service = make_service(
         embedding_service=FakeEmbeddingService(
             embedding=np.ones(
                 3,
@@ -358,7 +415,7 @@ def test_ask_rejects_empty_question(
 def test_ask_rejects_invalid_top_k(
     top_k: int,
 ) -> None:
-    service = RAGService(
+    service = make_service(
         embedding_service=FakeEmbeddingService(
             embedding=np.ones(
                 3,
@@ -385,7 +442,7 @@ def test_ask_rejects_invalid_top_k(
 
 
 def test_ask_rejects_empty_generated_answer() -> None:
-    service = RAGService(
+    service = make_service(
         embedding_service=FakeEmbeddingService(
             embedding=np.array(
                 [1.0, 0.0, 0.0],

@@ -20,6 +20,10 @@ class VectorStore(Protocol):
     def count(self) -> int:
         ...
 
+    @property
+    def chunks(self) -> tuple[Chunk, ...]:
+        ...
+
     def add_many(
         self,
         chunks: list[Chunk],
