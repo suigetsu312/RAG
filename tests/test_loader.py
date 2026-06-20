@@ -1,8 +1,22 @@
 from pathlib import Path
 
+import pymupdf
 import pytest
 
-from rag.loaders.text_loader import TextDocumentLoader
+from rag.loaders import (
+    MultiFormatDocumentLoader,
+    PDFFileLoader,
+    TextFileLoader,
+)
+
+
+def make_loader() -> MultiFormatDocumentLoader:
+    return MultiFormatDocumentLoader(
+        strategies=[
+            TextFileLoader(),
+            PDFFileLoader(),
+        ]
+    )
 
 
 def test_load_directory_reads_txt_files(
@@ -18,7 +32,7 @@ def test_load_directory_reads_txt_files(
         encoding="utf-8",
     )
 
-    loader = TextDocumentLoader()
+    loader = make_loader()
     documents = loader.load_directory(tmp_path)
 
     assert len(documents) == 2
@@ -43,7 +57,7 @@ def test_load_directory_reads_nested_txt_files(
         encoding="utf-8",
     )
 
-    loader = TextDocumentLoader()
+    loader = make_loader()
     documents = loader.load_directory(tmp_path)
 
     assert len(documents) == 1
@@ -65,7 +79,7 @@ def test_load_directory_ignores_non_txt_files(
         encoding="utf-8",
     )
 
-    loader = TextDocumentLoader()
+    loader = make_loader()
     documents = loader.load_directory(tmp_path)
 
     assert len(documents) == 1
@@ -79,7 +93,7 @@ def test_load_directory_returns_sorted_documents(
     (tmp_path / "a.txt").write_text("A", encoding="utf-8")
     (tmp_path / "b.txt").write_text("B", encoding="utf-8")
 
-    loader = TextDocumentLoader()
+    loader = make_loader()
     documents = loader.load_directory(tmp_path)
 
     assert [document.id for document in documents] == [
@@ -94,7 +108,7 @@ def test_load_directory_raises_for_missing_directory(
 ) -> None:
     missing_directory = tmp_path / "missing"
 
-    loader = TextDocumentLoader()
+    loader = make_loader()
 
     with pytest.raises(FileNotFoundError):
         loader.load_directory(missing_directory)
@@ -106,7 +120,58 @@ def test_load_directory_raises_when_path_is_file(
     file_path = tmp_path / "document.txt"
     file_path.write_text("content", encoding="utf-8")
 
-    loader = TextDocumentLoader()
+    loader = make_loader()
 
     with pytest.raises(NotADirectoryError):
         loader.load_directory(file_path)
+
+
+def test_load_file_reads_markdown_metadata(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "notes.md"
+    path.write_text("# Notes", encoding="utf-8")
+
+    documents = make_loader().load_file(path)
+
+    assert len(documents) == 1
+    assert documents[0].text == "# Notes"
+    assert documents[0].metadata["file_type"] == "markdown"
+
+
+def test_load_pdf_creates_one_document_per_text_page(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "paper.pdf"
+
+    with pymupdf.open() as pdf:
+        first_page = pdf.new_page()
+        first_page.insert_text((72, 72), "First page")
+        pdf.new_page()
+        third_page = pdf.new_page()
+        third_page.insert_text((72, 72), "Third page")
+        pdf.save(path)
+
+    documents = make_loader().load_file(path)
+
+    assert [document.id for document in documents] == [
+        "paper:page:1",
+        "paper:page:3",
+    ]
+    assert documents[0].text == "First page"
+    assert documents[1].text == "Third page"
+    assert documents[0].metadata["file_type"] == "pdf"
+    assert documents[0].metadata["page_count"] == 3
+
+
+def test_load_file_rejects_unsupported_type(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "data.json"
+    path.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(
+        ValueError,
+        match="Unsupported document file type",
+    ):
+        make_loader().load_file(path)

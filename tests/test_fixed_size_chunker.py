@@ -1,6 +1,6 @@
 import pytest
 
-from rag.chunkers import FixedSizeChunker
+from rag.chunkers import FixedSizeChunker, RoutingChunker
 from rag.document import Document
 
 
@@ -133,3 +133,38 @@ def test_invalid_configuration_raises(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
         )
+
+
+def test_routing_chunker_selects_chunker_by_file_type() -> None:
+    chunker = RoutingChunker(
+        chunkers={
+            "pdf": FixedSizeChunker(
+                chunk_size=10,
+                chunk_overlap=0,
+            ),
+        },
+        default_chunker=FixedSizeChunker(
+            chunk_size=6,
+            chunk_overlap=0,
+        ),
+    )
+
+    pdf_chunks = chunker.split(
+        Document(
+            id="paper:page:1",
+            text="0123456789",
+            source="paper.pdf",
+            metadata={"file_type": "pdf"},
+        )
+    )
+    text_chunks = chunker.split(
+        Document(
+            id="notes",
+            text="0123456789",
+            source="notes.txt",
+            metadata={"file_type": "text"},
+        )
+    )
+
+    assert len(pdf_chunks) == 1
+    assert len(text_chunks) == 2
