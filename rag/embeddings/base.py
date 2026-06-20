@@ -31,3 +31,7 @@ class EmbeddingService(Protocol):
         texts: list[str],
     ) -> BatchEmbeddingResultProtocol:
         ...
+
+    @property
+    def dimension(self) -> int:
+        ...

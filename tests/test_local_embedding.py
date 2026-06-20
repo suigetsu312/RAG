@@ -21,6 +21,9 @@ class FakeSentenceTransformer:
         self.device = device
         self.calls: list[dict[str, Any]] = []
 
+    def get_embedding_dimension(self) -> int:
+        return 3
+
     def encode(
         self,
         sentences: str | list[str],
@@ -110,6 +113,7 @@ def test_initializes_sentence_transformer_with_configuration(
     assert service.model_name == "test-model"
     assert service.device == "cpu"
     assert service.batch_size == 8
+    assert service.dimension == 3
 
 
 @pytest.mark.parametrize(

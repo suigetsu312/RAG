@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
 
 import numpy as np
-from numpy.typing import NDArray
 from sentence_transformers import SentenceTransformer
+
 from rag.embeddings.base import EmbeddingService
 from rag.embeddings.result import (
     BatchEmbeddingResult,
     EmbeddingResult,
 )
+
 
 class LocalEmbeddingService(EmbeddingService):
     def __init__(
@@ -30,6 +30,17 @@ class LocalEmbeddingService(EmbeddingService):
             model_name,
             device=device,
         )
+
+        dimension = (
+            self._model.get_embedding_dimension()
+        )
+
+        if dimension is None:
+            raise RuntimeError(
+                "Embedding model did not report its dimension"
+            )
+
+        self._dimension = int(dimension)
 
     def embed(self, text: str) -> EmbeddingResult:
         if not text.strip():
@@ -93,3 +104,7 @@ class LocalEmbeddingService(EmbeddingService):
             embeddings=embeddings,
             latency_ms=latency_ms,
         )
+
+    @property
+    def dimension(self) -> int:
+        return self._dimension
