@@ -197,6 +197,55 @@ def test_ask_runs_complete_rag_pipeline() -> None:
     )
 
 
+def test_retrieve_returns_chunks_without_generating_answer() -> None:
+    query_embedding = np.array(
+        [1.0, 0.0, 0.0],
+        dtype=np.float32,
+    )
+    retrieved = make_retrieved_chunk()
+    vector_store = FakeVectorStore(results=[retrieved])
+    answer_generator = FakeAnswerGenerator(
+        answer="should not be used",
+    )
+    service = RAGService(
+        embedding_service=FakeEmbeddingService(
+            embedding=query_embedding,
+        ),
+        vector_store=vector_store,
+        prompt_builder=PromptBuilder(),
+        answer_generator=answer_generator,
+    )
+
+    result = service.retrieve(
+        query="  Transformer  ",
+        top_k=2,
+    )
+
+    assert result.retrieved_chunks == [retrieved]
+    assert result.timings.query_embedding_ms >= 0.0
+    assert result.timings.retrieval_ms >= 0.0
+    assert result.timings.total_ms >= 0.0
+    assert vector_store.received_top_k == 2
+    assert answer_generator.call_count == 0
+
+
+def test_retrieve_rejects_empty_query() -> None:
+    service = RAGService(
+        embedding_service=FakeEmbeddingService(
+            embedding=np.ones(3, dtype=np.float32),
+        ),
+        vector_store=FakeVectorStore(results=[]),
+        prompt_builder=PromptBuilder(),
+        answer_generator=FakeAnswerGenerator(answer="answer"),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="query must not be empty",
+    ):
+        service.retrieve(query="  ")
+
+
 def test_ask_returns_no_context_without_calling_generator() -> None:
     embedding_service = FakeEmbeddingService(
         embedding=np.array(

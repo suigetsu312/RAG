@@ -4,6 +4,13 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True, slots=True)
+class RetrievalTimings:
+    query_embedding_ms: float
+    retrieval_ms: float
+    total_ms: float
+
+
+@dataclass(frozen=True, slots=True)
 class IndexingTimings:
     document_load_ms: float
     chunking_ms: float
