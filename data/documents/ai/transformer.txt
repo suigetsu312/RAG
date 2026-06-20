@@ -1,1 +1,0 @@
-Transformer 使用 self-attention 處理序列中的 token 關係。
