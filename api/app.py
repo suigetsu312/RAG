@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import (
@@ -16,6 +17,10 @@ from fastapi import (
 from pydantic import BaseModel, Field
 
 from config import load_env
+from rag.document_manifest import (
+    DocumentRecord,
+    calculate_sha256,
+)
 from rag.runtime import RAGRuntime, create_rag_runtime
 from services.llm import create_llm_service
 
@@ -23,12 +28,17 @@ from services.llm import create_llm_service
 class QueryRequest(BaseModel):
     question: str
     top_k: int = Field(default=5, ge=1)
+    include_context: bool = False
 
 
 class SourceResponse(BaseModel):
     source: str
     chunk_id: str
     score: float
+    page_number: int | None = None
+    start_char: int
+    end_char: int
+    text: str | None = None
 
 
 class QueryResponse(BaseModel):
@@ -39,11 +49,30 @@ class QueryResponse(BaseModel):
 
 
 class UploadDocumentResponse(BaseModel):
+    document_id: str
     file_name: str
+    sha256: str
+    size_bytes: int
     document_count: int
     chunk_count: int
     vector_count: int
     timings: dict[str, float]
+
+
+class DocumentResponse(BaseModel):
+    id: str
+    file_name: str
+    source: str
+    sha256: str
+    size_bytes: int
+    document_count: int
+    chunk_count: int
+    created_at: str
+
+
+class DocumentListResponse(BaseModel):
+    total: int
+    documents: list[DocumentResponse]
 
 
 @asynccontextmanager
@@ -94,7 +123,11 @@ def health(request: Request) -> dict[str, object]:
     }
 
 
-@app.post("/query", response_model=QueryResponse)
+@app.post(
+    "/query",
+    response_model=QueryResponse,
+    response_model_exclude_none=True,
+)
 def query(
     payload: QueryRequest,
     request: Request,
@@ -113,6 +146,14 @@ def query(
                 source=item.chunk.source,
                 chunk_id=item.chunk.id,
                 score=item.score,
+                page_number=item.chunk.metadata.get("page_number"),
+                start_char=item.chunk.start_char,
+                end_char=item.chunk.end_char,
+                text=(
+                    item.chunk.text
+                    if payload.include_context
+                    else None
+                ),
             )
             for item in result.retrieved_chunks
         ],
@@ -174,12 +215,6 @@ def upload_document(
         runtime.documents_directory / file_name
     )
 
-    if destination.exists():
-        raise HTTPException(
-            status_code=409,
-            detail=f"Document already exists: {file_name}",
-        )
-
     temporary_path = destination.with_suffix(
         f"{destination.suffix}.uploading"
     )
@@ -196,31 +231,106 @@ def upload_document(
                 output,
             )
 
-        os.replace(
-            temporary_path,
-            destination,
-        )
+        sha256 = calculate_sha256(temporary_path)
+        size_bytes = temporary_path.stat().st_size
 
-        result = runtime.indexing_service.add_file(
-            path=destination,
-            vector_store=runtime.vector_store,
-        )
+        with runtime.indexing_lock:
+            existing_content = (
+                runtime.document_manifest.find_by_sha256(
+                    sha256
+                )
+            )
 
-        runtime.vector_store.save(
-            runtime.index_directory
-        )
+            if existing_content is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": (
+                            "Document with the same content "
+                            "already exists"
+                        ),
+                        "document_id": existing_content.id,
+                        "file_name": existing_content.file_name,
+                    },
+                )
+
+            existing_name = (
+                runtime.document_manifest.find_by_file_name(
+                    file_name
+                )
+            )
+
+            if existing_name is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "message": (
+                            "Document with the same filename "
+                            "already exists"
+                        ),
+                        "document_id": existing_name.id,
+                    },
+                )
+
+            if destination.exists():
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"File already exists on disk: "
+                        f"{file_name}"
+                    ),
+                )
+
+            os.replace(
+                temporary_path,
+                destination,
+            )
+
+            result = runtime.indexing_service.add_file(
+                path=destination,
+                vector_store=runtime.vector_store,
+            )
+
+            runtime.vector_store.save(
+                runtime.index_directory
+            )
+
+            record = DocumentRecord(
+                id=sha256,
+                file_name=file_name,
+                source=file_name,
+                sha256=sha256,
+                size_bytes=size_bytes,
+                document_count=result.document_count,
+                chunk_count=result.chunk_count,
+                created_at=datetime.now(
+                    timezone.utc
+                ).isoformat(),
+            )
+
+            runtime.document_manifest.add(record)
+
+    except HTTPException:
+        temporary_path.unlink(missing_ok=True)
+        raise
 
     except Exception:
         temporary_path.unlink(missing_ok=True)
-        destination.unlink(missing_ok=True)
+
+        if destination.exists():
+            destination.unlink(missing_ok=True)
+
         raise
 
     timings = result.timings
 
     return UploadDocumentResponse(
-        file_name=file_name,
-        document_count=result.document_count,
-        chunk_count=result.chunk_count,
+        document_id=record.id,
+        file_name=record.file_name,
+        sha256=record.sha256,
+        size_bytes=record.size_bytes,
+        document_count=record.document_count,
+        chunk_count=record.chunk_count,
         vector_count=runtime.vector_store.count,
         timings={
             "document_load_ms": timings.document_load_ms,
@@ -231,4 +341,35 @@ def upload_document(
             ),
             "total_ms": timings.total_ms,
         },
+    )
+
+
+@app.get(
+    "/documents",
+    response_model=DocumentListResponse,
+)
+def list_documents(
+    request: Request,
+) -> DocumentListResponse:
+    runtime = get_runtime(request)
+
+    records = (
+        runtime.document_manifest.list_documents()
+    )
+
+    return DocumentListResponse(
+        total=len(records),
+        documents=[
+            DocumentResponse(
+                id=record.id,
+                file_name=record.file_name,
+                source=record.source,
+                sha256=record.sha256,
+                size_bytes=record.size_bytes,
+                document_count=record.document_count,
+                chunk_count=record.chunk_count,
+                created_at=record.created_at,
+            )
+            for record in records
+        ],
     )
