@@ -132,6 +132,10 @@ def test_build_returns_vector_store_and_timings() -> None:
     assert result.chunk_count == 2
     assert result.embedding_dimension == 3
     assert result.vector_store.count == 2
+    assert len(result.indexed_sources) == 1
+    assert result.indexed_sources[0].source == "doc.txt"
+    assert result.indexed_sources[0].document_count == 1
+    assert result.indexed_sources[0].chunk_count == 2
     assert result.timings.total_ms >= 0.0
     assert result.timings.embedding_ms >= 0.0
 

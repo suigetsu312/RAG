@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,8 +15,14 @@ from rag.loaders import DocumentLoader
 from rag.metrics import IndexingTimings
 from rag.vector_stores import VectorStore
 
-
 VectorStoreFactory = Callable[[int], VectorStore]
+
+
+@dataclass(frozen=True, slots=True)
+class IndexedSource:
+    source: str
+    document_count: int
+    chunk_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,7 +31,9 @@ class IndexingResult:
     document_count: int
     chunk_count: int
     embedding_dimension: int
+    indexed_sources: list[IndexedSource]
     timings: IndexingTimings
+
 
 @dataclass(frozen=True, slots=True)
 class IndexingUpdateResult:
@@ -84,6 +93,24 @@ class IndexingService:
                 "No chunks were generated from the input documents"
             )
 
+        document_counts = Counter(
+            document.source
+            for document in documents
+        )
+        chunk_counts = Counter(
+            chunk.source
+            for chunk in chunks
+        )
+        indexed_sources = [
+            IndexedSource(
+                source=source,
+                document_count=document_count,
+                chunk_count=chunk_counts.get(source, 0),
+            )
+            for source, document_count
+            in sorted(document_counts.items())
+        ]
+
         embedding_started_at = perf_counter()
         embedding_result = self._embedding_service.embed_batch(
             [chunk.text for chunk in chunks]
@@ -125,21 +152,18 @@ class IndexingService:
             vector_store_started_at
         )
 
-        total_ms = self._elapsed_ms(
-            total_started_at
-        )
-
         return IndexingResult(
             vector_store=vector_store,
             document_count=len(documents),
             chunk_count=len(chunks),
             embedding_dimension=embedding_dimension,
+            indexed_sources=indexed_sources,
             timings=IndexingTimings(
                 document_load_ms=document_load_ms,
                 chunking_ms=chunking_ms,
                 embedding_ms=embedding_ms,
                 vector_store_add_ms=vector_store_add_ms,
-                total_ms=total_ms,
+                total_ms=self._elapsed_ms(total_started_at),
             ),
         )
 
