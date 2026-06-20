@@ -1,9 +1,18 @@
 from __future__ import annotations
 
 import os
+import shutil
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import (
+    FastAPI,
+    File,
+    HTTPException,
+    Request,
+    UploadFile,
+)
+
 from pydantic import BaseModel, Field
 
 from config import load_env
@@ -29,6 +38,14 @@ class QueryResponse(BaseModel):
     generation: dict[str, object]
 
 
+class UploadDocumentResponse(BaseModel):
+    file_name: str
+    document_count: int
+    chunk_count: int
+    vector_count: int
+    timings: dict[str, float]
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     config = load_env()
@@ -37,6 +54,7 @@ async def lifespan(app: FastAPI):
     llm_service = create_llm_service(config)
 
     runtime = create_rag_runtime(
+        config,
         llm_service=llm_service,
         documents_directory=os.getenv(
             "RAG_DOCUMENTS_DIR",
@@ -46,9 +64,6 @@ async def lifespan(app: FastAPI):
             "RAG_INDEX_DIR",
             "data/index",
         ),
-        embedding_model=config.embedding.model,
-        embedding_device=config.embedding.device,
-        embedding_batch_size=config.embedding.batch_size,
     )
 
     app.state.rag_runtime = runtime
@@ -119,4 +134,101 @@ def query(
             ),
         },
         generation=result.generation_metadata,
+    )
+
+
+@app.post(
+    "/documents",
+    response_model=UploadDocumentResponse,
+    status_code=201,
+)
+def upload_document(
+    request: Request,
+    file: UploadFile = File(...),
+) -> UploadDocumentResponse:
+    runtime = get_runtime(request)
+
+    if not file.filename:
+        raise HTTPException(
+            status_code=400,
+            detail="Uploaded file must have a filename",
+        )
+
+    file_name = Path(file.filename).name
+    suffix = Path(file_name).suffix.lower()
+
+    supported_suffixes = {
+        ".txt",
+        ".md",
+        ".markdown",
+        ".pdf",
+    }
+
+    if suffix not in supported_suffixes:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported file type: {suffix}",
+        )
+
+    destination = (
+        runtime.documents_directory / file_name
+    )
+
+    if destination.exists():
+        raise HTTPException(
+            status_code=409,
+            detail=f"Document already exists: {file_name}",
+        )
+
+    temporary_path = destination.with_suffix(
+        f"{destination.suffix}.uploading"
+    )
+
+    runtime.documents_directory.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    try:
+        with temporary_path.open("wb") as output:
+            shutil.copyfileobj(
+                file.file,
+                output,
+            )
+
+        os.replace(
+            temporary_path,
+            destination,
+        )
+
+        result = runtime.indexing_service.add_file(
+            path=destination,
+            vector_store=runtime.vector_store,
+        )
+
+        runtime.vector_store.save(
+            runtime.index_directory
+        )
+
+    except Exception:
+        temporary_path.unlink(missing_ok=True)
+        destination.unlink(missing_ok=True)
+        raise
+
+    timings = result.timings
+
+    return UploadDocumentResponse(
+        file_name=file_name,
+        document_count=result.document_count,
+        chunk_count=result.chunk_count,
+        vector_count=runtime.vector_store.count,
+        timings={
+            "document_load_ms": timings.document_load_ms,
+            "chunking_ms": timings.chunking_ms,
+            "embedding_ms": timings.embedding_ms,
+            "vector_store_add_ms": (
+                timings.vector_store_add_ms
+            ),
+            "total_ms": timings.total_ms,
+        },
     )

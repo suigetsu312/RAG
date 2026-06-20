@@ -7,8 +7,12 @@ docker compose
 )
 
 case "${1:-}" in
+build)
+"${COMPOSE_CMD[@]}" up --build
+;;
+
 up)
-"${COMPOSE_CMD[@]}" up -d --build
+"${COMPOSE_CMD[@]}" up
 ;;
 
 down)
@@ -17,7 +21,7 @@ down)
 
 restart)
 "${COMPOSE_CMD[@]}" down
-"${COMPOSE_CMD[@]}" up -d --build
+"${COMPOSE_CMD[@]}" up
 ;;
 
 logs)
@@ -29,7 +33,7 @@ status|ps)
 ;;
 
 *)
-echo "Usage: $0 {up|down|restart|logs|status}"
+echo "Usage: $0 {build|up|down|restart|logs|status}"
 exit 1
 ;;
 esac

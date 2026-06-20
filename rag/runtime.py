@@ -5,12 +5,24 @@ from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
 
-from config import GenerationOptions
-from rag.chunkers import FixedSizeChunker
+from config import Config, GenerationOptions
+from rag.chunkers import (
+    Chunker,
+    FixedSizeChunker,
+    RoutingChunker,
+)
 from rag.embeddings import LocalEmbeddingService
 from rag.generators import LLMAnswerGenerator
-from rag.indexing_service import IndexingService
-from rag.loaders import TextDocumentLoader
+from rag.indexing_service import (
+    IndexingResult,
+    IndexingService,
+)
+from rag.loaders import (
+    DocumentLoader,
+    MultiFormatDocumentLoader,
+    PDFFileLoader,
+    TextFileLoader,
+)
 from rag.prompts import PromptBuilder
 from rag.rag_service import RAGService
 from rag.vector_stores import FAISSVectorStore
@@ -20,20 +32,54 @@ from services.llm import LLMService
 logger = logging.getLogger(__name__)
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class RAGRuntime:
     rag_service: RAGService
     vector_store: FAISSVectorStore
     indexing_service: IndexingService
+    indexing_result: IndexingResult | None
     documents_directory: Path
     index_directory: Path
 
 
+def create_document_loader() -> DocumentLoader:
+    return MultiFormatDocumentLoader(
+        strategies=[
+            TextFileLoader(),
+            PDFFileLoader(),
+        ]
+    )
+
+
+def create_chunker() -> Chunker:
+    default_chunker = FixedSizeChunker(
+        chunk_size=800,
+        chunk_overlap=120,
+    )
+
+    pdf_chunker = FixedSizeChunker(
+        chunk_size=1200,
+        chunk_overlap=200,
+    )
+
+    return RoutingChunker(
+        chunkers={
+            "pdf": pdf_chunker,
+        },
+        default_chunker=default_chunker,
+    )
+
+
 def load_or_build_vector_store(
     indexing_service: IndexingService,
-    documents_directory: Path,
-    index_directory: Path,
-) -> FAISSVectorStore:
+    documents_directory: str | Path,
+    index_directory: str | Path,
+) -> tuple[
+    FAISSVectorStore,
+    IndexingResult | None,
+]:
+    index_directory = Path(index_directory)
+
     index_path = (
         index_directory
         / FAISSVectorStore.INDEX_FILE_NAME
@@ -50,7 +96,7 @@ def load_or_build_vector_store(
         raise RuntimeError(
             "FAISS persistence is incomplete: "
             f"index_exists={index_exists}, "
-            f"chunks_exist={chunks_exist}"
+            f"chunks_exists={chunks_exist}"
         )
 
     if index_exists and chunks_exist:
@@ -60,7 +106,7 @@ def load_or_build_vector_store(
             index_directory
         )
 
-        elapsed_ms = (
+        load_ms = (
             perf_counter() - started_at
         ) * 1000.0
 
@@ -69,19 +115,21 @@ def load_or_build_vector_store(
             "dimension=%d | latency_ms=%.2f",
             vector_store.count,
             vector_store.dimension,
-            elapsed_ms,
+            load_ms,
         )
 
-        return vector_store
+        return vector_store, None
 
     logger.info(
-        "FAISS persistence not found; building index | "
+        "FAISS store not found; building index | "
         "documents_directory=%s",
         documents_directory,
     )
 
-    indexing_result = indexing_service.build(
-        documents_directory
+    indexing_result = (
+        indexing_service.build_directory(
+            documents_directory
+        )
     )
 
     vector_store = indexing_result.vector_store
@@ -91,8 +139,8 @@ def load_or_build_vector_store(
         FAISSVectorStore,
     ):
         raise TypeError(
-            "IndexingService did not create a "
-            "FAISSVectorStore"
+            "IndexingService did not create "
+            "a FAISSVectorStore"
         )
 
     vector_store.save(index_directory)
@@ -102,8 +150,8 @@ def load_or_build_vector_store(
     logger.info(
         "FAISS store built and saved | "
         "documents=%d | chunks=%d | dimension=%d | "
-        "load_ms=%.2f | chunking_ms=%.2f | "
-        "embedding_ms=%.2f | add_ms=%.2f | "
+        "document_load_ms=%.2f | chunking_ms=%.2f | "
+        "embedding_ms=%.2f | vector_store_add_ms=%.2f | "
         "total_ms=%.2f",
         indexing_result.document_count,
         indexing_result.chunk_count,
@@ -115,41 +163,40 @@ def load_or_build_vector_store(
         timings.total_ms,
     )
 
-    return vector_store
+    return vector_store, indexing_result
 
 
 def create_rag_runtime(
-    *,
+    config: Config,
     llm_service: LLMService,
     documents_directory: str | Path,
     index_directory: str | Path,
-    embedding_model: str,
-    embedding_device: str,
-    embedding_batch_size: int,
 ) -> RAGRuntime:
-    documents_path = Path(documents_directory)
-    index_path = Path(index_directory)
+    if config.embedding.backend != "local":
+        raise ValueError(
+            "Only the local embedding backend "
+            "is currently supported"
+        )
 
     embedding_service = LocalEmbeddingService(
-        model_name=embedding_model,
-        device=embedding_device,
-        batch_size=embedding_batch_size,
+        model_name=config.embedding.model,
+        device=config.embedding.device,
+        batch_size=config.embedding.batch_size,
     )
 
     indexing_service = IndexingService(
-        loader=TextDocumentLoader(),
-        chunker=FixedSizeChunker(
-            chunk_size=500,
-            chunk_overlap=100,
-        ),
+        loader=create_document_loader(),
+        chunker=create_chunker(),
         embedding_service=embedding_service,
         vector_store_factory=FAISSVectorStore,
     )
 
-    vector_store = load_or_build_vector_store(
-        indexing_service=indexing_service,
-        documents_directory=documents_path,
-        index_directory=index_path,
+    vector_store, indexing_result = (
+        load_or_build_vector_store(
+            indexing_service=indexing_service,
+            documents_directory=documents_directory,
+            index_directory=index_directory,
+        )
     )
 
     answer_generator = LLMAnswerGenerator(
@@ -158,6 +205,7 @@ def create_rag_runtime(
             num_ctx=4096,
             num_predict=1024,
             temperature=0.2,
+            top_p=1.0,
         ),
     )
 
@@ -172,6 +220,7 @@ def create_rag_runtime(
         rag_service=rag_service,
         vector_store=vector_store,
         indexing_service=indexing_service,
-        documents_directory=documents_path,
-        index_directory=index_path,
+        indexing_result=indexing_result,
+        documents_directory=Path(documents_directory),
+        index_directory=Path(index_directory),
     )

@@ -2,13 +2,12 @@ import logging
 from pathlib import Path
 
 from config import GenerationOptions, load_env
-from rag.chunkers import FixedSizeChunker
 from rag.embeddings import LocalEmbeddingService
 from rag.generators import LLMAnswerGenerator
 from rag.indexing_service import IndexingResult, IndexingService
-from rag.loaders import TextDocumentLoader
 from rag.prompts import PromptBuilder
 from rag.rag_service import RAGService
+from rag.runtime import create_chunker, create_document_loader
 from rag.vector_stores import FAISSVectorStore
 from services.llm import LLMService, create_llm_service
 
@@ -51,11 +50,8 @@ def build_rag_service(
     )
 
     indexing_service = IndexingService(
-        loader=TextDocumentLoader(),
-        chunker=FixedSizeChunker(
-            chunk_size=500,
-            chunk_overlap=100,
-        ),
+        loader=create_document_loader(),
+        chunker=create_chunker(),
         embedding_service=embedding_service,
         vector_store_factory=FAISSVectorStore,
     )

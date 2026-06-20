@@ -81,7 +81,7 @@ services:
       PYTHONUNBUFFERED: "1"
 
     volumes:
-      - ./data/documents:/app/data/documents:ro
+      - ./data/documents:/app/data/documents
       - rag_index:/app/data/index
       - huggingface_cache:/root/.cache/huggingface
 
