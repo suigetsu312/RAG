@@ -12,6 +12,14 @@ class FakeLoader:
     def __init__(self, documents: list[Document]) -> None:
         self.documents = documents
         self.received_directory: str | Path | None = None
+        self.received_file: str | Path | None = None
+
+    def load_file(
+        self,
+        path: str | Path,
+    ) -> list[Document]:
+        self.received_file = path
+        return self.documents
 
     def load_directory(
         self,
@@ -145,3 +153,42 @@ def test_build_rejects_documents_without_chunks() -> None:
         match="No chunks were generated",
     ):
         service.build("documents")
+
+
+def test_add_file_appends_to_existing_vector_store() -> None:
+    document = Document(
+        id="paper:page:1",
+        text="PDF page",
+        source="paper.pdf",
+        metadata={"file_type": "pdf"},
+    )
+    chunk = Chunk(
+        id="paper:page:1:chunk:0",
+        document_id=document.id,
+        text=document.text,
+        source=document.source,
+        start_char=0,
+        end_char=len(document.text),
+        metadata=document.metadata,
+    )
+    loader = FakeLoader([document])
+    vector_store = FakeVectorStore(dimension=3)
+    service = IndexingService(
+        loader=loader,
+        chunker=FakeChunker([chunk]),
+        embedding_service=FakeEmbeddingService(
+            np.array([[1.0, 0.0, 0.0]], dtype=np.float32)
+        ),
+        vector_store_factory=FakeVectorStore,
+    )
+
+    result = service.add_file(
+        path="paper.pdf",
+        vector_store=vector_store,
+    )
+
+    assert loader.received_file == "paper.pdf"
+    assert result.document_count == 1
+    assert result.chunk_count == 1
+    assert vector_store.added_chunks == [chunk]
+    assert result.timings.total_ms >= 0.0

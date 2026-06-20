@@ -1,11 +1,13 @@
-from rag.embeddings.local import (
+from rag.embeddings.base import EmbeddingService
+from rag.embeddings.local import LocalEmbeddingService
+from rag.embeddings.result import (
     BatchEmbeddingResult,
     EmbeddingResult,
-    LocalEmbeddingService,
 )
 
 __all__ = [
     "BatchEmbeddingResult",
     "EmbeddingResult",
+    "EmbeddingService",
     "LocalEmbeddingService",
 ]
