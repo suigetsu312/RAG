@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from rag.metrics import RAGTimings
+
 
 @dataclass(frozen=True, slots=True)
 class Document:
@@ -33,3 +35,5 @@ class RetrievedChunk:
 class RAGResult:
     answer: str
     retrieved_chunks: list[RetrievedChunk]
+    timings: RAGTimings = field(default_factory=RAGTimings)
+    generation_metadata: dict[str, Any] = field(default_factory=dict)

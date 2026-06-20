@@ -1,9 +1,9 @@
 from __future__ import annotations
-
+from rag.chunkers.base import Chunker
 from rag.document import Chunk, Document
 
 
-class FixedSizeChunker:
+class FixedSizeChunker(Chunker):
     def __init__(
         self,
         chunk_size: int = 500,

@@ -6,24 +6,13 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 from sentence_transformers import SentenceTransformer
+from rag.embeddings.base import EmbeddingService
+from rag.embeddings.result import (
+    BatchEmbeddingResult,
+    EmbeddingResult,
+)
 
-
-Float32Array = NDArray[np.float32]
-
-
-@dataclass(frozen=True, slots=True)
-class EmbeddingResult:
-    embedding: Float32Array
-    latency_ms: float
-
-
-@dataclass(frozen=True, slots=True)
-class BatchEmbeddingResult:
-    embeddings: Float32Array
-    latency_ms: float
-
-
-class LocalEmbeddingService:
+class LocalEmbeddingService(EmbeddingService):
     def __init__(
         self,
         model_name: str = "BAAI/bge-m3",

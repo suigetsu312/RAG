@@ -3,9 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from rag.document import Document
+from rag.loaders.base import DocumentLoader
 
-
-class TextDocumentLoader:
+class TextDocumentLoader(DocumentLoader):
     def load_directory(
         self,
         directory: str | Path,
