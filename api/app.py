@@ -75,6 +75,22 @@ class DocumentListResponse(BaseModel):
     documents: list[DocumentResponse]
 
 
+class RetrieveRequest(BaseModel):
+    query: str = Field(min_length=1)
+    top_k: int = Field(default=5, ge=1, le=20)
+
+
+class RetrieveTimingsResponse(BaseModel):
+    query_embedding_ms: float
+    retrieval_ms: float
+    total_ms: float
+
+
+class RetrieveResponse(BaseModel):
+    results: list[SourceResponse]
+    timings: RetrieveTimingsResponse
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     config = load_env()
@@ -373,3 +389,55 @@ def list_documents(
             for record in records
         ],
     )
+
+
+@app.post(
+    "/retrieve",
+    response_model=RetrieveResponse,
+    response_model_exclude_none=True,
+)
+def retrieve(
+    payload: RetrieveRequest,
+    request: Request,
+) -> RetrieveResponse:
+    runtime = get_runtime(request)
+
+    result = runtime.rag_service.retrieve(
+        query=payload.query,
+        top_k=payload.top_k,
+    )
+
+    return RetrieveResponse(
+        results=[
+            SourceResponse(
+                source=item.chunk.source,
+                chunk_id=item.chunk.id,
+                score=item.score,
+                page_number=_get_page_number(
+                    item.chunk.metadata
+                ),
+                start_char=item.chunk.start_char,
+                end_char=item.chunk.end_char,
+                text=item.chunk.text,
+            )
+            for item in result.retrieved_chunks
+        ],
+        timings=RetrieveTimingsResponse(
+            query_embedding_ms=(
+                result.timings.query_embedding_ms
+            ),
+            retrieval_ms=result.timings.retrieval_ms,
+            total_ms=result.timings.total_ms,
+        ),
+    )
+
+
+def _get_page_number(
+    metadata: dict[str, object],
+) -> int | None:
+    page_number = metadata.get("page_number")
+
+    if isinstance(page_number, int):
+        return page_number
+
+    return None
