@@ -229,6 +229,40 @@ def test_ask_returns_no_context_without_calling_generator() -> None:
     assert answer_generator.call_count == 0
 
 
+def test_ask_skips_generation_for_low_relevance_result() -> None:
+    retrieved = make_retrieved_chunk()
+    low_relevance_result = RetrievedChunk(
+        chunk=retrieved.chunk,
+        score=0.4,
+    )
+    answer_generator = FakeAnswerGenerator(
+        answer="should not be used",
+    )
+    service = RAGService(
+        embedding_service=FakeEmbeddingService(
+            embedding=np.array(
+                [1.0, 0.0, 0.0],
+                dtype=np.float32,
+            ),
+        ),
+        vector_store=FakeVectorStore(
+            results=[low_relevance_result],
+        ),
+        prompt_builder=PromptBuilder(),
+        answer_generator=answer_generator,
+        min_relevance_score=0.6,
+    )
+
+    result = service.ask("unrelated question")
+
+    assert "找不到與問題足夠相關" in result.answer
+    assert result.retrieved_chunks == [low_relevance_result]
+    assert result.timings.prompt_build_ms == 0.0
+    assert result.timings.generation_ms == 0.0
+    assert result.generation_metadata == {}
+    assert answer_generator.call_count == 0
+
+
 @pytest.mark.parametrize(
     "question",
     [

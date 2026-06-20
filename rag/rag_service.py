@@ -3,11 +3,11 @@ from __future__ import annotations
 from time import perf_counter
 
 from rag.document import RAGResult
-from rag.embeddings.base import EmbeddingService
-from rag.generators.base import AnswerGenerator
+from rag.embeddings import EmbeddingService
+from rag.generators import AnswerGenerator
 from rag.metrics import RAGTimings
 from rag.prompts import PromptBuilder
-from rag.vector_stores.base import VectorStore
+from rag.vector_stores import VectorStore
 
 
 class RAGService:
@@ -21,11 +21,13 @@ class RAGService:
         vector_store: VectorStore,
         prompt_builder: PromptBuilder,
         answer_generator: AnswerGenerator,
+        min_relevance_score: float = 0.60,
     ) -> None:
         self._embedding_service = embedding_service
         self._vector_store = vector_store
         self._prompt_builder = prompt_builder
         self._answer_generator = answer_generator
+        self._min_relevance_score = min_relevance_score
 
     def ask(
         self,
@@ -79,6 +81,24 @@ class RAGService:
                 ),
             )
 
+        if retrieved_chunks[0].score < self._min_relevance_score:
+            total_ms = (perf_counter() - total_start) * 1000.0
+
+            return RAGResult(
+                answer=(
+                    "找不到與問題足夠相關的文件內容，"
+                    "因此無法根據目前的知識庫回答。"
+                ),
+                retrieved_chunks=retrieved_chunks,
+                timings=RAGTimings(
+                    query_embedding_ms=query_embedding_ms,
+                    retrieval_ms=retrieval_ms,
+                    prompt_build_ms=0.0,
+                    generation_ms=0.0,
+                    total_ms=total_ms,
+                ),
+            )
+
         prompt_start = perf_counter()
         prompt = self._prompt_builder.build(
             question=normalized_question,
@@ -116,5 +136,5 @@ class RAGService:
                 generation_ms=generation_ms,
                 total_ms=total_ms,
             ),
-            generation_metadata=answer.metadata
+            generation_metadata=answer.metadata,
         )
